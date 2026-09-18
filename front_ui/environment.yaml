@@ -1,0 +1,10 @@
+name: front_ui
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - flet[all]
+      - numpy
+      - requests
