@@ -1,0 +1,40 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+
+# ---- 환경 ----
+.venv/
+venv/
+.env
+
+# ---- colcon (워크스페이스 루트에 생기지만 방어용) ----
+build/
+install/
+log/
+
+# ---- Flet 앱 (front_ui) ----
+front_ui/storage/
+front_ui/dist/
+front_ui/.flet/
+front_ui/src/assets/renders/*.png
+
+# ---- 에디터 / OS ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ---- 데이터 / 산출물 ----
+*.db
+*.sqlite
+*.sqlite3
+*.bag
+*.mcap
+cache/
