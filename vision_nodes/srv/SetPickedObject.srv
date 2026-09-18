@@ -1,0 +1,16 @@
+# Any6D가 실제로 선택한 제외 클래스
+string model_name
+
+# control이 Any6D에 전달한 요청 시점의 로봇 TCP pose
+# 단위: x/y/z = mm, rx/ry/rz = deg (Doosan posx, ZYZ)
+float64 x
+float64 y
+float64 z
+float64 rx
+float64 ry
+float64 rz
+---
+# 이 응답은 all_object 작업 접수 성공/실패만 의미합니다.
+# DB 저장 성공 여부와는 무관합니다.
+bool success
+string message
