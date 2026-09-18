@@ -1,0 +1,5 @@
+# 제어 노드가 탐지 직전에 현재 TCP 자세를 탐지 노드에 전달한다.
+float64[6] tcp_pose
+---
+bool success
+string message

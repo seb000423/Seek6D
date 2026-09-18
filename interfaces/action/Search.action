@@ -1,0 +1,13 @@
+# 상태 노드 -> 작업 노드 (탐색 실행)
+# Goal
+string target_name
+string class_label
+---
+# Result
+bool   success
+string location      # 찾은 위치. 못 찾았으면 빈 문자열
+string message
+---
+# Feedback
+string  step         # 지금 뭐 하는 중인지
+float32 progress     # 0.0 ~ 1.0

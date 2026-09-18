@@ -1,0 +1,11 @@
+# DB 탐색 — 물건 유무 및 위치를 돌려준다
+# request 예시:
+#   {}                      전체
+#   {"name": "컵"}          이름으로
+#   {"class_label": "cup"}  클래스로
+string request
+---
+bool   success
+# response 예시: {"count": 4, "items": [{...}, ...]}
+string response
+string message

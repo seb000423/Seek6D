@@ -1,0 +1,11 @@
+# 데이터 저장 — 작업 1회분을 통째로 반영한다
+# request 예시:
+#   {"source": "item_node",
+#    "items": [{"name": "컵", "class_label": "cup",
+#               "location": "주방 싱크대", "confidence": 0.92}, ...]}
+string request
+---
+bool   success
+# response 예시: {"inserted": 1, "updated": 2, "results": [...]}
+string response
+string message

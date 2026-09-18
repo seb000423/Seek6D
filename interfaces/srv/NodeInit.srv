@@ -1,0 +1,15 @@
+# 초기화 확인 — 모든 노드가 공유한다
+# 상태 노드가 /db/init, /item/init, /comm/init ... 에 똑같이 던지는 질문
+#
+# request 예시:
+#   {}                        그냥 확인만
+#   {"node": "state_node"}    누가 물었는지 남기고 싶을 때
+string request
+---
+# 준비됐으면 true. 상태 노드는 이 값만 봐도 판단할 수 있다
+bool   success
+# 노드별 상태 JSON. 담는 내용은 노드마다 자유롭게 정한다
+#   DB 노드   {"ready": true, "db_path": "...", "items": 4, "sightings": 9}
+#   통신 노드 {"ready": true, "server": "connected"}
+string response
+string message
