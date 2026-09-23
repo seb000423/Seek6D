@@ -79,8 +79,8 @@ DB에 저장된 마지막 위치를 우선 확인하고, 대상이 보이지 않
 2. **Container Search**  
    서랍·보관함을 단순 장애물이 아닌 조작 가능한 탐색 공간으로 처리. 직접 열고 내부를 재관측.
 
-3. **Detection + 6D Pose with Validation**  
-   GroundingDINO Fine-Tuning, BBox / Depth 1차 필터, Geometry / Depth / Matching Score 기반 2차 Pose 검증.
+3. **Detection Filtering + 6D Pose**  
+   GroundingDINO Fine-Tuning, 클래스별 Confidence · NMS · Depth Mask 필터로 후보를 고른 뒤 Any6D로 Camera 기준 6D Pose 추정.
 
 4. **Collision-aware Manipulation**  
    Camera → Base 좌표 변환 후 MoveIt 2 IK · 관절 제한 · 충돌 검사 기반으로 접근 및 파지.
@@ -93,9 +93,9 @@ DB에 저장된 마지막 위치를 우선 확인하고, 대상이 보이지 않
 ## System
 
 <div align="center">
-  <img src="./assets/project_flow.png" width="100%" alt="Seek6D project flow">
+  <img src="./assets/project_flow.png" width="100%" alt="Seek6D task flow">
   <br>
-  <sub>전체 작업 흐름</sub>
+  <sub>요청 → 탐색 → 관측 → 파지 → 전달 · 원상복구 → 기록, 전 과정은 UI에서 모니터링</sub>
 </div>
 
 <br>
@@ -117,15 +117,15 @@ DB Last Position Check
  └─ unknown / not detected       │
           │                      │
           ▼                      │
-   Search Zones / Drawer Open    │
+ Search Zones 1-6 / Box Open     │
           │                      │
           └──────────┬───────────┘
                      ▼
              GroundingDINO
                      ▼
-                Any6D Pose
+     Confidence / NMS / Depth Mask
                      ▼
-          Pose Validation / Recenter
+                Any6D Pose
                      ▼
              Camera → Base
                      ▼
@@ -141,9 +141,9 @@ DB Last Position Check
 | Phase | Description |
 |:---|:---|
 | **1. Command** | 음성 명령 수신 및 대상 클래스 정규화 |
-| **2. Search** | DB 최근 위치 우선 관측, 미검출 시 탐색 구역 순차 이동 |
-| **3. Container** | 필요 시 `green_box`, `gray_box` 등 보관함 개방 후 내부 재관측 |
-| **4. Perception** | GroundingDINO 검출 → Any6D 6D Pose → 검증 |
+| **2. Search** | DB 최근 위치 우선 관측, 미검출 시 탐색 구역 1 ~ 6 순차 이동 |
+| **3. Container** | 대상이 없으면 `green_box`, `gray_box` 보관함을 찾아 개방 후 내부 재관측 |
+| **4. Perception** | GroundingDINO 검출 → Confidence · NMS · Depth Mask 필터 → Any6D 6D Pose |
 | **5. Manipulation** | Camera → Base 변환, MoveIt 2 IK · 충돌 · 관절 제한 검증 후 RG2 파지 |
 | **6. Restore** | 이송 및 보관함 원상복구, 결과와 물체 위치를 DB에 기록 |
 
@@ -156,7 +156,7 @@ DB Last Position Check
 <div align="center">
   <img src="./assets/system_architecture.png" width="100%" alt="Seek6D system architecture">
   <br>
-  <sub>시스템 아키텍처</sub>
+  <sub>ROS 2 패키지 구성과 Service / Action / DB 데이터 흐름</sub>
 </div>
 
 <br>
@@ -169,7 +169,7 @@ DB Last Position Check
 | `voice_command` | 웨이크워드, Whisper STT, GPT 객체명 정규화 |
 | `state` | `LOAD → IDLE → RUN` 상태머신, 작업 접수 및 Search Action 조정 |
 | `control_node` | DB 위치 확인, 탐색, 좌표 변환, MoveIt 2 모션, RG2 파지, 서랍/보관함 동작 |
-| `vision_nodes` | GroundingDINO 탐지, Any6D 6D Pose, 검증, 물체 위치 DB 갱신 |
+| `vision_nodes` | GroundingDINO 탐지, 후보 필터링, Any6D 6D Pose, 나머지 물체 위치 DB 갱신 |
 | `db` | SQLite 기반 `items` / `tasks` 저장·조회 |
 | `back_ui` | ROS 2 데이터를 HTTP / JSON / JPEG로 변환 |
 | `front_ui` | Flet 기반 모니터링 전용 UI |
@@ -181,9 +181,9 @@ DB Last Position Check
 ## Vision & 6D Pose
 
 <div align="center">
-  <img src="./assets/vision_pipeline.png" width="100%" alt="GroundingDINO and Any6D pipeline">
+  <img src="./assets/vision_pipeline.png" width="100%" alt="dino_any6d_node pipeline">
   <br>
-  <sub>GroundingDINO + Any6D 파이프라인</sub>
+  <sub><code>dino_any6d_node</code> — 요청 기반 Camera 좌표계 6D Pose 추정 흐름</sub>
 </div>
 
 <br>
@@ -191,6 +191,19 @@ DB Last Position Check
 - **GroundingDINO**: 어떤 물체가 영상의 어디에 있는가 → Bounding Box + Confidence
 - **Any6D**: 그 물체가 3차원 공간에서 어디에 있고 어떤 방향인가 → Position + Rotation
 - RGB, Depth, Object Mask, Camera Intrinsic, 3D Mesh로 `T_camera_object` 추정
+
+<div align="center">
+
+| Step | Description |
+|:---|:---|
+| **1. Acquire RGB-D** | 정렬된 Color + Depth + Intrinsic `K`, 타임스탬프 허용 오차(80 ms) 이내 프레임만 사용 |
+| **2. Select a Detection** | 요청 클래스 검출 → Confidence · NMS · Depth Mask 필터, 대상이 없으면 `green_box` / `gray_box` fallback 검출 |
+| **3. Estimate Object Pose** | 물체 Mesh 로드 · 실제 높이로 Scale 보정 → Any6D `register()` → `track_one_any6d()` |
+| **4. Return the Result** | `T_camera_object` → position (m) + quaternion 반환, 후보 없음은 `detected=false`, 처리 오류는 `success=false` |
+
+</div>
+
+- 응답 Pose는 항상 **Camera 기준**이며, Camera → Base 변환 · Grasp 후보 생성 · MoveIt 2 IK는 `control_node`에서 처리
 
 ### Node 분리
 
@@ -203,7 +216,8 @@ DB Last Position Check
 
 </div>
 
-모든 물체에 Any6D를 반복 적용하면 연산량이 커지므로, 정밀 파지와 전체 상태 관리 역할을 분리함.
+모든 물체에 Any6D를 반복 적용하면 연산량이 커지므로, 정밀 파지와 전체 상태 관리 역할을 분리함.  
+Pose 추정이 성공하면 `/set_picked_object`로 선택 클래스와 요청 시점 TCP Pose를 넘기고, `dino_all_object_node`가 **선택된 물체를 제외한 나머지**를 DINO + Depth로 Base XYZ 변환해 DB에 저장함.
 
 <div align="center">
 <table>
@@ -230,31 +244,47 @@ DB Last Position Check
 </table>
 </div>
 
-### Detection Robustness
+### Detection Filtering
 
 <div align="center">
-  <img src="./assets/vision_filtering.png" width="100%" alt="GroundingDINO fine tuning and filtering">
+  <img src="./assets/vision_filtering.png" width="100%" alt="Detection filtering in dino_any6d_node">
+  <br>
+  <sub><code>dino_any6d_node</code> 기본 설정 기준 후보 선택 과정</sub>
 </div>
 
 <br>
 
-Pre-trained GroundingDINO에서 인형류와 박스류 오검출이 발생하여 다음 단계로 개선함.
-
-```text
-Open-GroundingDINO Fine-Tuning
-        ↓
-Confidence / BBox Size / Depth Filter
-        ↓
-Any6D Pose Estimation
-        ↓
-Geometry / Depth / Matching Score Validation
-        ↓
-Valid Pose  ──────── or ────────  Recenter / Reject
-```
+Pre-trained GroundingDINO에서 인형류와 박스류 오검출이 발생하여, 프로젝트 물체 7종으로 **Open-GroundingDINO Fine-Tuning** 후 아래 필터로 Any6D 입력 후보를 선별함.
 
 <div align="center">
 
-| Metric | Result |
+| Stage | Rule |
+|:---|:---|
+| **01 Confidence + NMS** | 인형류(`white_bear`, `green_frog`, `otter_in_can`) ≥ 0.35 · 그 외 ≥ 0.50, NMS IoU 0.55 |
+| **02 Valid Depth** | BBox 내부 Depth 중 0.10 m < depth < 2.00 m 인 유효값만 사용 |
+| **03 Depth Mask** | BBox 중앙부 우선, 유효 Depth의 Median 기준 ±0.12 m 픽셀만 Mask로 유지 |
+| **04 Mask Area + Candidate** | Mask 100 px 미만 제외, 남은 후보 중 최고 Confidence를 선택해 Mask + RGB-D를 Any6D로 전달 |
+
+</div>
+
+> 필터는 **검출 후보를 거르는 단계**이며, 그 자체로 파지 성공이나 6D 정합의 정확성을 보장하지는 않음.
+
+<details>
+<summary><b>발표 자료 — Fine-Tuning 결과와 실험 단계 검증</b></summary>
+
+<br/>
+
+<div align="center">
+  <img src="./assets/vision_filtering_slide.png" width="100%" alt="DINO false detection, fine-tuning and filtering slide">
+  <br><br>
+  <img src="./assets/vision_pipeline_slide.png" width="100%" alt="Dino Any6D node flow slide">
+</div>
+
+<br>
+
+<div align="center">
+
+| Metric (Fine-Tuning) | Result |
 |:---:|:---:|
 | BBox AP | **≈ 0.960** |
 | AP50 | **≈ 0.997** |
@@ -262,7 +292,10 @@ Valid Pose  ──────── or ────────  Recenter / Rej
 
 </div>
 
-- Pose가 생성되어도 항상 올바른 정합이 아니므로, 정상·비정상 Pose 실험 기반으로 **Any6D Matching Score 122**를 검증 기준 중 하나로 사용
+- AP 수치는 발표 자료 기준이며, 평가 산출물은 저장소에 포함되어 있지 않음
+- BBox Size-Ratio 필터와 Geometry / Depth / **Any6D Matching Score 122** 기반 Pose 검증은 실험 단계에서 사용했으며, 현재 `dino_any6d_node`에는 포함되지 않음
+
+</details>
 
 ### Supported Objects
 
@@ -387,9 +420,10 @@ ROS 2 Nodes
 
 | Problem | Solution |
 |:---|:---|
-| DINO 고신뢰도 오검출 | 프로젝트 7개 물체 직접 Fine-Tuning + BBox Size / Depth 기반 1차 필터 |
-| Pose 생성은 성공하지만 잘못된 정합 | Geometry + Depth + Any6D Matching Score 기반 2차 Validation |
-| 화면 가장자리에서 물체가 잘림 | Pixel Error 기반 Recenter 요청 → Camera 이동 → 재관측 |
+| DINO 고신뢰도 오검출 | 프로젝트 7개 물체 직접 Fine-Tuning + 클래스별 Confidence · NMS 필터 |
+| BBox 안에 배경이 섞여 Pose 정합이 흔들림 | BBox 중앙 Median Depth ±0.12 m Mask만 Any6D에 입력, 100 px 미만 Mask 제외 |
+| 요청 물체가 시야에 없음 | `green_box` / `gray_box` fallback 검출 → 보관함 개방 후 재관측 |
+| 모든 물체에 Any6D 적용 시 연산량 과다 | 파지 대상만 Any6D, 나머지는 `dino_all_object_node`가 DINO + Depth로 위치만 갱신 |
 | 서랍 각도에 따라 IK 해가 없음 | 접근 방위각 후보를 순회해 전체 경유 Pose가 가능한 방향을 사전 선택 |
 | 동적 서랍과 충돌 가능성 | 파지 중 Planning Scene attach, 개방 후 위치 갱신 및 detach |
 | 좌표계가 여러 단계로 분리됨 | Hand-Eye Matrix와 현재 TCP로 Camera → Base 변환 후 MoveIt Target 생성 |
@@ -608,15 +642,17 @@ flet run
 
 - **6D Pose 좌표축 오차**: 물체 자세와 관측 방향에 따라 Any6D 추정 축이 흔들려 정밀 접근에 오차 발생 가능
 - **Occlusion / Edge View**: 화면 가장자리에 있거나 일부 가려진 경우 Detection 및 Mesh 정합 정확도 저하
-- **Processing Time**: 탐색 → Detection → Pose → Validation → Robot Move → Re-detection이 이어지며 작업 시간 증가
+- **Processing Time**: 탐색 → Detection → Pose → Robot Move → Re-detection이 이어지며 작업 시간 증가
+- **Pose Validation / Recenter**: Matching Score 기반 Pose 검증은 실험 단계에만 적용됨. `control_node`는 `recenter_required` 응답을 처리할 수 있으나 현재 Vision 노드는 이를 생성하지 않음
 - **TF Tree Integration**: Base, TCP, Camera Frame 변환이 하나의 TF Tree로 통합되지 않아 일부를 Service와 Hand-Eye Matrix에 의존
 
 **Future Work**
 
-1. RGB-D 및 형상 정보를 활용한 Pose 안정화와 좌표축 보정
-2. 가림 · 잘림 상태에 따른 Next-Best-View 재관측
-3. 후보 영역 우선순위화 및 결과 재사용을 통한 탐색 · 추론 속도 최적화
-4. Camera → TCP → Base → MoveIt Target 좌표 변환 구조 단순화 및 TF 통합
+1. 실험 단계의 Geometry / Depth / Matching Score 검증을 Vision 노드에 통합하고 `recenter_required` 응답 생성
+2. RGB-D 및 형상 정보를 활용한 Pose 안정화와 좌표축 보정
+3. 가림 · 잘림 상태에 따른 Next-Best-View 재관측
+4. 후보 영역 우선순위화 및 결과 재사용을 통한 탐색 · 추론 속도 최적화
+5. Camera → TCP → Base → MoveIt Target 좌표 변환 구조 단순화 및 TF 통합
 
 ---
 
